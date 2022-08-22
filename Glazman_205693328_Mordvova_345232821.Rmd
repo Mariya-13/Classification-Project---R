@@ -1,0 +1,251 @@
+---
+title: "LAB4"
+output: html_document
+author: "Sapir Glazman 205693328 and Mariya Mordvova 345232821"
+date: '2022-06-11'
+---
+
+## Data downloaded from https://www.kaggle.com/datasets/zalando-research/fashionmnist
+
+**We will consider the PULLOVER as 1 or "Success"/"Yes", where COAT would be 0 or "Fail"/"No".**
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+library(dplyr)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+library(randomForest)
+```
+
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+# Add file names 
+train_dat_file = "/Users/Maria/Downloads/fashion-mnist_train.csv" 
+test_dat_file = "/Users/Maria/Downloads/fashion-mnist_test.csv"
+
+
+# Read data
+fashion_mnist = read.csv(train_dat_file)
+fashion_mnist_te = read.csv(test_dat_file)
+
+
+# Keep only pullovers (2) and coats (4)
+pull_and_coats = fashion_mnist %>% filter( label %in% c(2,4))
+pull_and_coats_te = fashion_mnist_te %>% filter( label %in% c(2,4))
+
+
+# Viewing function. 
+view_image = function(k, dat = pull_and_coats[,-1],col_map = grey.colors(256)){
+  im = dat[k,] 
+  image(matrix(as.numeric(im), nc = 28)[,28:1]/256, col = col_map)
+}
+
+
+train_response = factor(pull_and_coats[,1],) 
+train_feat = pull_and_coats[,-1] 
+
+train_feat$y <- as.factor(pull_and_coats$label)
+pull_and_coats_te$y <- as.factor(pull_and_coats_te$label)
+
+train_feat$y <- ifelse(train_feat$y == 2, 1, 0)
+pull_and_coats_te$y <- as.numeric(as.character(ifelse(pull_and_coats_te$y == 2, 1, 0)))
+pull_and_coats_te = pull_and_coats_te[-1] 
+
+
+```
+
+
+
+# **Q.1**:
+
+
+**We have decided to use following 2 methods in order to validate the train set we selected:**
+
+  1. **Logistic Regression**
+  2. **TREES: Random Forest**
+  
+## Logistic Regression
+
+We have decided to go with Logistic Regression since we have a binary prediction problem: pics with coat or pullover => Logistic Regression is the 1st thought to use in our situation.
+However, GLM function is a  slow function for  big  data frames.
+In order to make the GLM function work better, we will start by performing PCA and check up how many PC's we want to use:
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#PCA 
+pca_train <- prcomp(x = t(train_feat[,-ncol(train_feat)]), scale = T, center = TRUE)
+
+
+# Variance explained by each principal component: PVE
+principal_var <- pca_train$sdev^2
+PVE_1 <- principal_var / sum(principal_var)
+
+d1 <- data.frame("n" = 1:length(cumsum(PVE_1)), "Explained_Var" = cumsum(PVE_1))
+d1_short <- d1[1:30,]
+kable(tail(d1_short), row.names = F)
+xx <- seq(1,784,1)
+yy <- cumsum(PVE_1)
+
+ggplot(data = d1, aes(x = n, y = Explained_Var))+
+  geom_line(size = 1)+
+  ggtitle("Cumulative Proportion of Explained Variance")+
+  geom_point(inherit.aes = F, aes(x=30, y = Explained_Var[30]), col = "red", size = 3)+
+  geom_hline(yintercept = 0.9, col = "green", size = 0.75)+
+  scale_x_continuous(name="PC's", limits=c(0, 90), breaks = c(0,25,30,50,75,90))+
+  scale_y_continuous(name = "Variance   Proportion", limits = c(0.3,1), breaks = seq(0,1,0.1))+theme_classic()
+ 
+```
+* **Conclusion: We can see from the plot that in order to account for 90% of the variance we'll be using the first 30 PC's (90% of the variance the major part of the explained variance).** 
+
+
+We will run regression with 30 PCs because GLM takes a lot of time, with 30PCs the running time is quite better.
+
+```{r,echo=F, fig.width= 7, fig.height=6}
+
+pca_train <- data.frame(prcomp(x = t(train_feat[,-ncol(train_feat)]), rank. = 30,
+                               center = TRUE, scale = T)$rotation) 
+pca_train$y <- train_feat$y
+
+
+
+pca_test <- data.frame(prcomp(x = t(pull_and_coats_te[,-ncol(pull_and_coats_te)]), rank. = 30,
+                               center = TRUE, scale = T)$rotation) 
+#pca_test$y <- pull_and_coats_te$y
+logit_pr <- function(x){return(exp(x)/(1+exp(x)))}
+
+logit_mdl <- glm(formula = y ~ ., data = pca_train, family = 'binomial')
+glm_predictions <- round(logit_pr(predict(logit_mdl, newdata = pca_test, type = 'link')))
+
+
+
+```
+
+
+## Random forest
+
+We have decided to run Random forest with 10 trees as customary.Since this method reduces errors very quickly and efficiently, taking more trees would not make a significant change.
+
+```{r,echo=F, fig.width= 7, fig.height=6}
+set.seed(2932872)
+
+RF1 <- randomForest(train_feat[,-ncol(train_feat)],
+                         y = factor(train_feat[,ncol(train_feat)]),
+                        ntree=10,norm.votes = TRUE, proximity = TRUE, keep.forest=TRUE)
+
+
+RF_pred1<- predict(RF1,newdata = pull_and_coats_te[,-ncol(pull_and_coats_te)])
+```
+We tried to run 20 trees, however, the accuracy didnt change significantly compare to the 10 tress, so we decided to go with 10 trees. After running the RF (with $n=10$) we get accuracy of about $95\%$. Furthermore, by accuracy comparison we conclude that RF is better.
+
+
+
+# **Q.2**:
+
+We need to calculate:
+
+  1. Confusion Matrix $= C \in \mathbb{R}^{2\times3}$
+  2. Precision
+  3. Recall
+
+
+Where:
+
+$$Precision = \frac{TP}{TP+FP}$$
+$$Recall =\frac{TP}{P}$$
+```{r,echo=F, fig.width= 7, fig.height=6}
+confusion_m <- function(prediction,reality){
+  confusion <- table(reality,prediction)
+  precision <- confusion[1,1]/sum(confusion[,1])
+  recall <- confusion[2,2]/sum(confusion[2,])
+  return(list("Confusion"=confusion,"Precision"=precision,"Recall"=recall))
+}
+
+confusion_m(RF_pred1,pull_and_coats_te$y)
+
+confusion_m(glm_predictions,pull_and_coats_te$y)
+```
+Fisrt confusion matrix refers to RF: we can see that TP and TN are pretty big, while FN and FP are relatively small. That's mean that RF classifier did a pretty good job. Furthermore, we refer to Precision and Recall and we can that them both have big values also proving that RF classified good.
+
+On the other hand, we have confusion matrix for logistic regression. We can see that even though TP is pretty big, however, FN is also big. This is also reflected by big precision, however together with a small recall - meaning that most of our prediction are 0, which is not true.
+
+*Overfitting:*
+```{r,echo=F, fig.width= 7, fig.height=6}
+
+### y's hat for PCA data
+train_pca_yhat <- round(logit_mdl$fitted.values)
+teat_pca_yhat <- round(predict(logit_mdl, newdata = pca_test, type = 'response'))
+
+### y's hat for RF
+RF_train_pred <- as.numeric(as.character(predict(RF1, train_feat[,-ncol(train_feat)], type = "response")))
+RF_test_pred <- as.numeric(as.character(predict(RF1, pull_and_coats_te[,-ncol(pull_and_coats_te)], type = "response")))
+
+
+### accuracy
+pca_train_acc <- sum(ifelse(train_pca_yhat == train_feat$y, 1, 0))/length(train_feat$y)
+pca_test_acc <- sum(ifelse(teat_pca_yhat == pull_and_coats_te$y, 1, 0))/length(pull_and_coats_te$y)
+
+RF_train_acc <- sum(ifelse(RF_train_pred == train_feat$y,1, 0))/length(train_feat$y)
+RF_test_acc <- sum(ifelse(RF_test_pred == pull_and_coats_te$y,1, 0))/length(pull_and_coats_te$y)
+
+results <- data.frame("Train Accuracy" = c(pca_train_acc,RF_train_acc),
+                      "Test Accuracy" = c(pca_test_acc,RF_test_acc),
+                     row.names = c("GLM_PCA", "Random Forest"))
+
+results$Difference <- (results$Train.Accuracy-results$Test.Accuracy)
+kable(results, align = 'c',format = "html",digits = 4)
+```
+
+
+* Overfitting occurs when the model minimize the error significantly, but only to the train se t=> an overfitted model would be very accurate when predicting the train set (up to a random error/noise), but when predicting a new set (like the test set) the accuracy of the predection decreses.*
+In our case, not surprisingly, the accuracy of the train prediction is very high (about 85-99% for each method).
+
+  
+* **GLM PCA:** In the PCA method we observe about 20% increase of error, which means that when we try to predict the test data we will be wrong in 20% more than the prediction of the original train data.
+  
+  
+* **RF:** In comparison, the RandomForest model seems to be missing only by $10\%$ which is twice better from GLM PCA (can also mean a reasonable random error, but shows no sign on overfitting).
+
+# Q.3:
+To calculate ROC we need to find the proportion of True Positives and False Positive on different proportions of the interval $[0,1]$, using:
+
+$$TP=\frac{\sum_i{\mathbb{1}_{\{\hat{y}_i=1\}}}}{\sum_i{\mathbb{1}_{\{y_i=1\}}}}$$ $$FP=\frac{\sum_i{\mathbb{1}_{\{\hat{y}_i=1\}}}}{\sum_i{\mathbb{1}_{\{y_i=0\}}}}$$
+```{r,echo=F, fig.width= 7, fig.height=6}
+ROC <- function(conf_matrix) {
+  TPR<- conf_matrix[2,2]/sum(conf_matrix[,1])
+  FPR<- conf_matrix[1,2]/sum(conf_matrix[,2])
+  return(c(FPR,TPR))
+}
+
+
+ROC(confusion_m(RF_pred1,pull_and_coats_te$y)$Confusion)
+ROC(confusion_m(glm_predictions,pull_and_coats_te$y)$Confusion)
+
+ROC_data <- as.data.frame(rbind(c(0,0),c(0,0),ROC(confusion_m(RF_pred1,pull_and_coats_te$y)$Confusion),ROC(confusion_m(glm_predictions,pull_and_coats_te$y)$Confusion),c(1,1),c(1,1)))
+names(ROC_data) <- c("x","y")
+ROC_data$model <- rep(c("Random Forest","Logistic Reg"),3)
+ggplot(data = ROC_data, aes(x = x, y = y, color = model)) +
+  geom_path(lwd=1) +
+  geom_rug() + scale_color_manual(values=c("red","blue"))+
+  geom_abline(intercept = 0, slope = 1,lwd=1) +
+  labs(title = 'ROC Curve Plot', x = 'False Positive Rate', y = 'True Positive Rate')+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+* In the plot we observe the black line its a random classifier (pretty bad - shows linear relasion between FP and TP). The red line - logistic regression classifier is a little bit better than black one, but still pretty bad. However, the blue line - Random Forest classifier is a good one, that shows a good quality of classification correspoding between TPR and FPR.
+
+# Q.4:
+We have decided to chose RF because its a better classifier:
+```{r,echo=F, fig.width= 7, fig.height=6}
+incorrect <- which((RF_pred1 != pull_and_coats_te$y))
+par(mfrow=c(2,2))
+view_image(incorrect[2],dat = pull_and_coats[,-ncol(pull_and_coats_te)])
+view_image(incorrect[13],dat = pull_and_coats[,-ncol(pull_and_coats_te)])
+view_image(incorrect[44],dat = pull_and_coats[,-ncol(pull_and_coats_te)])
+view_image(incorrect[56],dat = pull_and_coats[,-ncol(pull_and_coats_te)])
+
+```
+* By analyzing the above pictures we can draw a conclusion which items will be wrongly classified. All of the pictures above are united by the background color - black, while the color of item either light grey or dark grey. Thereofore, we assume that such types of pictures will be classified wrongly.
+
+# Q.5:
+The given picture has a light background and the item color is rather dark. Therefore, it does not have the pattern of the item from a previous question that were wrongly classified, therefore there is no reason to think that this item will have wrong classification. Fromm all of the above, we assume that the given item will be classified in a right way.
